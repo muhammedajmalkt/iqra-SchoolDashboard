@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo } from "react";
+import { useActionState, useEffect, useMemo, useTransition } from "react";
 import { toast } from "react-toastify";
 import { resultSchema, type ResultSchema } from "@/lib/formValidationSchemas";
 import { createResult, updateResult } from "@/lib/actions";
@@ -36,6 +36,7 @@ const ResultForm = ({
     },
   });
 
+  const [isPending, startTransition] = useTransition();
   const [state, formAction] = useActionState(
     type === "create" ? createResult : updateResult,
     {
@@ -46,14 +47,22 @@ const ResultForm = ({
   );
 
   const router = useRouter();
-  const { students = [], exams = [], assignments = [], teacherClassIds } = relatedData || {};
+  const {
+    students = [],
+    exams = [],
+    assignments = [],
+    teacherClassIds,
+  } = relatedData || {};
 
   // Debug logging - remove this in production
   console.log("🔍 ResultForm Debug:");
   console.log("relatedData:", relatedData);
   console.log("teacherClassIds:", teacherClassIds);
   console.log("students count:", students.length);
-  console.log("filteredStudents will be based on teacherClassIds:", teacherClassIds);
+  console.log(
+    "filteredStudents will be based on teacherClassIds:",
+    teacherClassIds
+  );
 
   // Filter students based on teacher's assigned classes
   const filteredStudents = useMemo(() => {
@@ -61,10 +70,11 @@ const ResultForm = ({
       // If no teacher class filter is provided, return all students (admin view)
       return students;
     }
-    
+
     // Filter students who belong to the teacher's assigned classes
-    return students.filter((student: { id: string; name: string; classId?: number }) => 
-      student.classId && teacherClassIds.includes(student.classId)
+    return students.filter(
+      (student: { id: string; name: string; classId?: number }) =>
+        student.classId && teacherClassIds.includes(student.classId)
     );
   }, [students, teacherClassIds]);
 
@@ -73,9 +83,10 @@ const ResultForm = ({
     if (!teacherClassIds || teacherClassIds.length === 0) {
       return exams;
     }
-    
-    return exams.filter((exam: { id: number; title: string; classId?: number }) => 
-      exam.classId && teacherClassIds.includes(exam.classId)
+
+    return exams.filter(
+      (exam: { id: number; title: string; classId?: number }) =>
+        exam.classId && teacherClassIds.includes(exam.classId)
     );
   }, [exams, teacherClassIds]);
 
@@ -83,9 +94,10 @@ const ResultForm = ({
     if (!teacherClassIds || teacherClassIds.length === 0) {
       return assignments;
     }
-    
-    return assignments.filter((assignment: { id: number; title: string; classId?: number }) => 
-      assignment.classId && teacherClassIds.includes(assignment.classId)
+
+    return assignments.filter(
+      (assignment: { id: number; title: string; classId?: number }) =>
+        assignment.classId && teacherClassIds.includes(assignment.classId)
     );
   }, [assignments, teacherClassIds]);
 
@@ -105,12 +117,16 @@ const ResultForm = ({
   };
 
   const onSubmit = handleSubmit((formData) => {
-    formAction(formData);
+    startTransition(() => {
+      formAction(formData);
+    });
   });
 
   useEffect(() => {
     if (state.success) {
-      toast.success(`Result has been ${type === "create" ? "created" : "updated"}!`);
+      toast.success(
+        `Result has been ${type === "create" ? "created" : "updated"}!`
+      );
       setOpen(false);
       router.refresh();
     }
@@ -123,7 +139,9 @@ const ResultForm = ({
       </h2>
 
       <fieldset className="space-y-4">
-        <legend className="text-sm font-medium text-gray-400">Result Information</legend>
+        <legend className="text-sm font-medium text-gray-400">
+          Result Information
+        </legend>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">Student</label>
@@ -133,17 +151,24 @@ const ResultForm = ({
               required
             >
               <option value="">Select Student</option>
-              {filteredStudents?.map((student: { id: string; name: string; className?: string }) => (
-                <option key={student.id} value={student.id}>
-                  {student.name} {student.className && `(${student.className})`}
-                </option>
-              ))}
+              {filteredStudents?.map(
+                (student: { id: string; name: string; className?: string }) => (
+                  <option key={student.id} value={student.id}>
+                    {student.name}{" "}
+                    {student.className && `(${student.className})`}
+                  </option>
+                )
+              )}
             </select>
             {errors.studentId && (
-              <p className="text-xs text-red-500 mt-1">{errors.studentId.message}</p>
+              <p className="text-xs text-red-500 mt-1">
+                {errors.studentId.message}
+              </p>
             )}
             {filteredStudents.length === 0 && teacherClassIds && (
-              <p className="text-xs text-gray-500 mt-1">No students found in your assigned classes</p>
+              <p className="text-xs text-gray-500 mt-1">
+                No students found in your assigned classes
+              </p>
             )}
           </div>
 
@@ -156,14 +181,18 @@ const ResultForm = ({
               required
             />
             {errors.score && (
-              <p className="text-xs text-red-500 mt-1">{errors.score.message}</p>
+              <p className="text-xs text-red-500 mt-1">
+                {errors.score.message}
+              </p>
             )}
           </div>
         </div>
       </fieldset>
 
       <fieldset className="space-y-4">
-        <legend className="text-sm font-medium text-gray-400">Assessment</legend>
+        <legend className="text-sm font-medium text-gray-400">
+          Assessment
+        </legend>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">Exam</label>
@@ -173,14 +202,18 @@ const ResultForm = ({
               className="w-full p-2 border rounded"
             >
               <option value="">Select Exam</option>
-              {filteredExams?.map((exam: { id: number; title: string; className?: string }) => (
-                <option key={exam.id} value={exam.id}>
-                  {exam.title} {exam.className && `(${exam.className})`}
-                </option>
-              ))}
+              {filteredExams?.map(
+                (exam: { id: number; title: string; className?: string }) => (
+                  <option key={exam.id} value={exam.id}>
+                    {exam.title} {exam.className && `(${exam.className})`}
+                  </option>
+                )
+              )}
             </select>
             {errors.examId && (
-              <p className="text-xs text-red-500 mt-1">{errors.examId.message}</p>
+              <p className="text-xs text-red-500 mt-1">
+                {errors.examId.message}
+              </p>
             )}
           </div>
 
@@ -192,22 +225,29 @@ const ResultForm = ({
               className="w-full p-2 border rounded"
             >
               <option value="">Select Assignment</option>
-              {filteredAssignments?.map((assignment: { id: number; title: string; className?: string }) => (
-                <option key={assignment.id} value={assignment.id}>
-                  {assignment.title} {assignment.className && `(${assignment.className})`}
-                </option>
-              ))}
+              {filteredAssignments?.map(
+                (assignment: {
+                  id: number;
+                  title: string;
+                  className?: string;
+                }) => (
+                  <option key={assignment.id} value={assignment.id}>
+                    {assignment.title}{" "}
+                    {assignment.className && `(${assignment.className})`}
+                  </option>
+                )
+              )}
             </select>
             {errors.assignmentId && (
-              <p className="text-xs text-red-500 mt-1">{errors.assignmentId.message}</p>
+              <p className="text-xs text-red-500 mt-1">
+                {errors.assignmentId.message}
+              </p>
             )}
           </div>
         </div>
       </fieldset>
 
-      {data?.id && (
-        <input type="hidden" {...register("id")} />
-      )}
+      {data?.id && <input type="hidden" {...register("id")} />}
 
       {state.error && state.errorMessage && (
         <p className="text-red-500 text-sm">{state.errorMessage}</p>
@@ -223,9 +263,16 @@ const ResultForm = ({
         </button>
         <button
           type="submit"
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          disabled={isPending}
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
         >
-          {type === "create" ? "Create" : "Update"}
+          {isPending
+            ? type === "create"
+              ? "Creating..."
+              : "Updating..."
+            : type === "create"
+            ? "Create"
+            : "Update"}
         </button>
       </div>
     </form>
