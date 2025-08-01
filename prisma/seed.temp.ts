@@ -9,11 +9,21 @@ const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 async function createAdminUser() {
   try {
+    const existingUsers = await clerk.users.getUserList({
+      username: ["anfaskaloor"],
+    });
+
+    if (existingUsers.data.length > 0) {
+      await clerk.users.deleteUser(existingUsers.data[0].id);
+      console.log("Existing user deleted");
+    }
+
     const user = await clerk.users.createUser({
       username: "anfaskaloor",
       password: "SecureAdmin123!",
       publicMetadata: { role: "admin" },
     });
+    
     console.log("Admin user created:", user.id);
   } catch (error) {
     console.error("Error creating admin:", error);
@@ -98,7 +108,7 @@ async function main() {
         name: `Lesson${i}`,
         day: Day[
           Object.keys(Day)[
-          Math.floor(Math.random() * Object.keys(Day).length)
+            Math.floor(Math.random() * Object.keys(Day).length)
           ] as keyof typeof Day
         ],
         subjectId: (i % 10) + 1,
@@ -130,7 +140,7 @@ async function main() {
         id: `student${i}`,
         username: `student${i}`,
         name: `SName${i}`,
-        rollNo:i,
+        rollNo: i,
         surname: `SSurname ${i}`,
         email: `student${i}@example.com`,
         phone: `987-654-321${i}`,
@@ -270,7 +280,6 @@ async function main() {
       });
     }
   }
-
 
   console.log("Seeding completed successfully.");
 }
