@@ -442,19 +442,22 @@ export const updateTeacher = async (
     if (data.img) {
       try {
         const response = await fetch(data.img);
-        if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+        if (!response.ok)
+          throw new Error(`Failed to fetch image: ${response.statusText}`);
 
         const buffer = await response.arrayBuffer();
-        const fileExt = data.img.split('.').pop()?.toLowerCase() || 'png';
-        const mimeType = `image/${fileExt === 'jpg' ? 'jpeg' : fileExt}`;
-        const file = new File([buffer], `profile.${fileExt}`, { type: mimeType });
+        const fileExt = data.img.split(".").pop()?.toLowerCase() || "png";
+        const mimeType = `image/${fileExt === "jpg" ? "jpeg" : fileExt}`;
+        const file = new File([buffer], `profile.${fileExt}`, {
+          type: mimeType,
+        });
 
         await clerk.users.updateUserProfileImage(data.id, { file });
       } catch (imgError) {
         console.error("Failed to update student profile image:", imgError);
       }
     }
-    
+
     await prisma.teacher.update({
       where: {
         id: data.id,
@@ -532,12 +535,15 @@ export const createStudent = async (
     if (data.img) {
       try {
         const response = await fetch(data.img);
-        if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+        if (!response.ok)
+          throw new Error(`Failed to fetch image: ${response.statusText}`);
 
         const buffer = await response.arrayBuffer();
-        const fileExt = data.img.split('.').pop()?.toLowerCase() || 'png';
-        const mimeType = `image/${fileExt === 'jpg' ? 'jpeg' : fileExt}`;
-        const file = new File([buffer], `profile.${fileExt}`, { type: mimeType });
+        const fileExt = data.img.split(".").pop()?.toLowerCase() || "png";
+        const mimeType = `image/${fileExt === "jpg" ? "jpeg" : fileExt}`;
+        const file = new File([buffer], `profile.${fileExt}`, {
+          type: mimeType,
+        });
 
         await clerk.users.updateUserProfileImage(user.id, { file });
       } catch (imgError) {
@@ -632,14 +638,24 @@ export const updateStudent = async (
     if (data.img) {
       try {
         const response = await fetch(data.img);
-        if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+        if (!response.ok)
+          throw new Error(`Failed to fetch image: ${response.statusText}`);
 
         const buffer = await response.arrayBuffer();
-        const fileExt = data.img.split('.').pop()?.toLowerCase() || 'png';
-        const mimeType = `image/${fileExt === 'jpg' ? 'jpeg' : fileExt}`;
-        const file = new File([buffer], `profile.${fileExt}`, { type: mimeType });
+        const fileExt = data.img.split(".").pop()?.toLowerCase() || "png";
+        const mimeType = `image/${fileExt === "jpg" ? "jpeg" : fileExt}`;
+        const file = new File([buffer], `profile.${fileExt}`, {
+          type: mimeType,
+        });
 
         await clerk.users.updateUserProfileImage(data.id, { file });
+
+        await prisma.student.update({
+          where: { id: data.id },
+          data: {
+            img: data.img,
+          },
+        });
       } catch (imgError) {
         console.error("Failed to update student profile image:", imgError);
       }
@@ -655,7 +671,6 @@ export const updateStudent = async (
         email: data.email || null,
         phone: data.phone || null,
         address: data.address,
-        img: data.img || null,
         bloodType: data.bloodType,
         sex: data.sex,
         birthday: new Date(data.birthday),
