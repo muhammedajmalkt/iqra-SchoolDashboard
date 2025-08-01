@@ -1,157 +1,425 @@
+/*
+ * IMPORTANT NOTE ABOUT PROFILE IMAGES:
+ *
+ * Clerk's backend API has limitations when setting profile images directly.
+ * The recommended approaches are:
+ *
+ * 1. Store image URLs in publicMetadata during seeding
+ * 2. Handle profile image updates on the frontend using Clerk's client-side methods
+ * 3. Use Clerk webhooks to process profile images after user creation
+ *
+ * Frontend example (React):
+ * ```javascript
+ * import { useUser } from "@clerk/nextjs";
+ *
+ * const { user } = useUser();
+ * const profileImageUrl = user?.publicMetadata?.profileImageUrl;
+ *
+ * // Update profile image
+ * await user.setProfileImage({ file: imageFile });
+ * ```
+ *
+ * Webhook example:
+ * Set up a webhook that triggers on user.created events to process
+ * the profileImageUrl stored in publicMetadata
+ */
+
 import { PrismaClient } from "@prisma/client";
-const prisma = new PrismaClient();
-import { createClerkClient } from "@clerk/backend";
+import { createClerkClient, User } from "@clerk/backend";
 import { config } from "dotenv";
+
 config();
 
+const prisma = new PrismaClient();
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
-async function createAdminUser() {
+// Type definitions for our seed data
+type SeedGrade = {
+  level: number;
+};
+
+type SeedFeeType = {
+  name: string;
+  description: string;
+  defaultAmount: number;
+};
+
+type SeedAdmin = {
+  id: string;
+  username: string;
+};
+
+type SeedTeacher = {
+  username: string;
+  name: string;
+  surname: string;
+  email: string;
+  phone: string;
+  address: string;
+  bloodType: string;
+  sex: "MALE" | "FEMALE";
+  birthday: Date;
+  subjectNames: string[];
+  img: string;
+};
+
+type SeedParent = {
+  username: string;
+  name: string;
+  surname: string;
+  email: string;
+  phone: string;
+  address: string;
+};
+
+type SeedStudent = {
+  username: string;
+  name: string;
+  surname: string;
+  email: string;
+  phone: string;
+  address: string;
+  img: string;
+  bloodType: string;
+  sex: "MALE" | "FEMALE";
+  birthday: Date;
+  className: string;
+  parentUsername: string;
+  rollNo: number;
+};
+
+// Helper function to validate image URLs
+function isValidImageUrl(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    return (
+      (urlObj.protocol === "http:" || urlObj.protocol === "https:") &&
+      url.trim() !== ""
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Helper function to test image accessibility
+async function testImageUrl(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(5000), // 5 second timeout
+    });
+    const contentType = response.headers.get("content-type");
+    return response.ok && (contentType?.startsWith("image/") || false);
+  } catch {
+    return false;
+  }
+}
+
+// Helper functions with error handling
+async function safeDeleteUser(username: string): Promise<void> {
   try {
     const existingUsers = await clerk.users.getUserList({
-      username: ["anfaskaloor"],
+      username: [username],
     });
-
     if (existingUsers.data.length > 0) {
       await clerk.users.deleteUser(existingUsers.data[0].id);
-      console.log("Existing user deleted");
+      console.log(`Deleted existing user: ${username}`);
+    }
+  } catch (error) {
+    console.error(
+      `Error deleting user ${username}:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+// Simplified and working createClerkUser function
+async function createClerkUser(userData: {
+  username: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  emailAddress?: string[];
+  publicMetadata?: Record<string, unknown>;
+  profileImageUrl?: string;
+}): Promise<User> {
+  try {
+    await safeDeleteUser(userData.username);
+
+    // Prepare public metadata including profile image URL
+    const publicMetadata = {
+      ...userData.publicMetadata,
+      ...(userData.profileImageUrl &&
+        isValidImageUrl(userData.profileImageUrl) && {
+          profileImageUrl: userData.profileImageUrl,
+          hasProfileImage: true,
+        }),
+    };
+
+    // Create user with metadata (this always works)
+    const user = await clerk.users.createUser({
+      username: userData.username,
+      password: userData.password,
+      firstName: userData.firstName,
+      lastName: userData.lastName,
+      emailAddress: userData.emailAddress,
+      publicMetadata,
+    });
+
+    console.log(
+      `User created: ${userData.username}${
+        userData.profileImageUrl ? " (with profile image URL in metadata)" : ""
+      }`
+    );
+    return user;
+  } catch (error) {
+    throw new Error(
+      `Failed to create Clerk user ${userData.username}: ${
+        error instanceof Error ? error.message : error
+      }`
+    );
+  }
+}
+
+// Helper function to update profile image after user creation (call this from frontend)
+async function updateUserProfileImage(
+  userId: string,
+  imageUrl: string
+): Promise<void> {
+  try {
+    // This would typically be called from your frontend application
+    // where you have access to the proper Clerk client-side methods
+    console.log(`Profile image update needed for user ${userId}: ${imageUrl}`);
+
+    // Store the instruction in public metadata
+    await clerk.users.updateUser(userId, {
+      publicMetadata: {
+        pendingProfileImageUrl: imageUrl,
+        profileImageUpdateNeeded: true,
+      },
+    });
+  } catch (error) {
+    console.error(`Failed to prepare profile image update:`, error);
+  }
+}
+
+async function seedAdmin(): Promise<void> {
+  const adminData = {
+    username: "anfaskaloor",
+    password: "SecureAdmin123!",
+    publicMetadata: { role: "admin" },
+  };
+
+  try {
+    const user = await createClerkUser(adminData);
+
+    await prisma.admin.upsert({
+      where: { username: adminData.username },
+      update: {},
+      create: {
+        id: user.id, // Use the Clerk user ID instead of "1"
+        username: adminData.username,
+      },
+    });
+
+    console.log("Admin user created/updated:", user.id);
+  } catch (error) {
+    console.error(
+      "Error in seedAdmin:",
+      error instanceof Error ? error.message : error
+    );
+    throw error;
+  }
+}
+
+async function seedGrades(grades: SeedGrade[]): Promise<void> {
+  try {
+    await prisma.$transaction(
+      grades.map((grade) =>
+        prisma.grade.upsert({
+          where: { level: grade.level },
+          update: {},
+          create: { level: grade.level },
+        })
+      )
+    );
+    console.log("Grades seeded successfully");
+  } catch (error) {
+    console.error(
+      "Error seeding grades:",
+      error instanceof Error ? error.message : error
+    );
+    throw error;
+  }
+}
+
+async function seedFeeTypes(feeTypes: SeedFeeType[]): Promise<void> {
+  try {
+    await prisma.$transaction(
+      feeTypes.map((feeType) =>
+        prisma.feeType.upsert({
+          where: { name: feeType.name },
+          update: {},
+          create: feeType,
+        })
+      )
+    );
+    console.log("Fee types seeded successfully");
+  } catch (error) {
+    console.error(
+      "Error seeding fee types:",
+      error instanceof Error ? error.message : error
+    );
+    throw error;
+  }
+}
+
+async function clearAllClerkUsers(): Promise<void> {
+  try {
+    console.log("Clearing all Clerk users...");
+    let hasMore = true;
+    let offset = 0;
+    const limit = 100; // Clerk's max limit per page
+
+    while (hasMore) {
+      const userList = await clerk.users.getUserList({ limit, offset });
+      
+      // Delete users in parallel
+      await Promise.all(
+        userList.data.map(user => 
+          clerk.users.deleteUser(user.id).catch(e => 
+            console.error(`Failed to delete user ${user.id}:`, e instanceof Error ? e.message : e)
+          )
+        )
+      );
+
+      hasMore = userList.data.length === limit;
+      offset += limit;
+      console.log(`Deleted ${userList.data.length} users...`);
     }
 
-    const user = await clerk.users.createUser({
-      username: "anfaskaloor",
-      password: "SecureAdmin123!",
-      publicMetadata: { role: "admin" },
-    });
-
-    await prisma.admin.deleteMany()
-    // ADMIN
-    await prisma.admin.create({
-      data: {
-        id: "1",
-        username: "anfaskaloor",
-      },
-    });
-
-    console.log("Admin user created:", user.id);
+    console.log("All Clerk users cleared successfully");
   } catch (error) {
-    console.error("Error creating admin:", error);
+    console.error(
+      "Error clearing Clerk users:",
+      error instanceof Error ? error.message : error
+    );
+    throw error;
   }
 }
 
+// Main seed function
 async function main() {
-  await createAdminUser();
-  // await tempSeed();
+  try {
+    await clearAllClerkUsers()
+    // Basic seed
+    await seedAdmin();
 
-  await prisma.grade.deleteMany()
-  // GRADE
-  for (let i = 1; i <= 6; i++) {
-    await prisma.grade.create({
-      data: {
-        level: i,
+    const grades: SeedGrade[] = Array.from({ length: 6 }, (_, i) => ({
+      level: i + 1,
+    }));
+    await seedGrades(grades);
+
+    const feeTypes: SeedFeeType[] = [
+      {
+        name: "Tuition",
+        description: "Monthly tuition fee",
+        defaultAmount: 150.0,
       },
-    });
-  }
+      {
+        name: "Lab Fee",
+        description: "Science lab maintenance fee",
+        defaultAmount: 50.0,
+      },
+      {
+        name: "Library Fee",
+        description: "Library membership and maintenance",
+        defaultAmount: 30.0,
+      },
+      {
+        name: "Transport",
+        description: "School bus fee",
+        defaultAmount: 75.0,
+      },
+    ];
+    await seedFeeTypes(feeTypes);
 
-  // FEE TYPES
-  const feeTypes = [
-    {
-      name: "Tuition",
-      description: "Monthly tuition fee",
-      defaultAmount: 150.0,
-    },
-    {
-      name: "Lab Fee",
-      description: "Science lab maintenance fee",
-      defaultAmount: 50.0,
-    },
-    {
-      name: "Library Fee",
-      description: "Library membership and maintenance",
-      defaultAmount: 30.0,
-    },
-    {
-      name: "Transport",
-      description: "School bus fee",
-      defaultAmount: 75.0,
-    },
-  ];
+    // Uncomment if you want to run the full seed
+    await fullSeed();
 
-  await prisma.feeType.deleteMany()
-  for (const feeType of feeTypes) {
-    await prisma.feeType.create({ data: feeType });
+    console.log("Seed completed successfully");
+  } catch (error) {
+    console.error(
+      "Error in main seed function:",
+      error instanceof Error ? error.message : error
+    );
+    process.exit(1);
   }
 }
 
-async function tempSeed() {
-  // Clear existing data (be careful with this in production!)
-  await prisma.$transaction([
-    prisma.incident.deleteMany(),
-    prisma.behavior.deleteMany(),
-    prisma.announcementView.deleteMany(),
-    prisma.announcement.deleteMany(),
-    prisma.event.deleteMany(),
-    prisma.result.deleteMany(),
-    prisma.assignment.deleteMany(),
-    prisma.exam.deleteMany(),
-    prisma.attendance.deleteMany(),
-    prisma.lesson.deleteMany(),
-    prisma.fee.deleteMany(),
-    prisma.feeType.deleteMany(),
-    prisma.student.deleteMany(),
-    prisma.parent.deleteMany(),
-    prisma.teacher.deleteMany(),
-    prisma.subject.deleteMany(),
-    prisma.class.deleteMany(),
-    prisma.grade.deleteMany(),
-  ]);
+// Full seed function with all data
+async function fullSeed(): Promise<void> {
+  try {
+    console.log("Starting full seed...");
 
-  // Create Grades
-  const grades = await prisma.$transaction([
-    prisma.grade.create({ data: { level: 9 } }),
-    prisma.grade.create({ data: { level: 10 } }),
-    prisma.grade.create({ data: { level: 11 } }),
-  ]);
+    // Clear existing data in a safe order (respecting foreign key constraints)
+    const modelNames = [
+      "result",
+      "assignment", 
+      "exam",
+      "attendance",
+      "lesson",
+      "fee",
+      "incident",
+      "behavior",
+      "announcementView",
+      "announcement",
+      "event",
+      "student",
+      "parent",
+      "teacher",
+      "subject",
+      "class",
+    ];
 
-  // Create Subjects
-  const subjects = await prisma.$transaction([
-    prisma.subject.create({ data: { name: "Mathematics" } }),
-    prisma.subject.create({ data: { name: "Science" } }),
-    prisma.subject.create({ data: { name: "English" } }),
-    prisma.subject.create({ data: { name: "History" } }),
-  ]);
+    for (const model of modelNames) {
+      try {
+        await (prisma as any)[model].deleteMany();
+        console.log(`Cleared ${model} table`);
+      } catch (error) {
+        console.error(
+          `Error clearing ${model} table:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
 
-  // Create Teachers
-  const teacher1 = await clerk.users.createUser({
-    username: "teacher1",
-    password: "SecureAdmin123!",
-    firstName: "John",
-    lastName: "Smith",
-    emailAddress: ["john.smith@school.edu"],
-    publicMetadata: { role: "teacher" },
-  });
+    // Create Grades
+    const grades = await prisma.$transaction(
+      [9, 10, 11].map((level) =>
+        prisma.grade.upsert({
+          where: { level },
+          update: {},
+          create: { level },
+        })
+      )
+    );
 
-  const teacher2 = await clerk.users.createUser({
-    username: "teacher2",
-    password: "SecureAdmin123!",
-    firstName: "Sarah",
-    lastName: "Johnson",
-    emailAddress: ["sarah.johnson@school.edu"],
-    publicMetadata: { role: "teacher" },
-  });
+    // Create Subjects
+    const subjectNames = ["Mathematics", "Science", "English", "History"];
+    const subjects = await prisma.$transaction(
+      subjectNames.map((name) =>
+        prisma.subject.upsert({
+          where: { name },
+          update: {},
+          create: { name },
+        })
+      )
+    );
 
-  const teacher3 = await clerk.users.createUser({
-    username: "teacher3",
-    password: "SecureAdmin123!",
-    firstName: "Michael",
-    lastName: "Brown",
-    emailAddress: ["michael.brown@school.edu"],
-    publicMetadata: { role: "teacher" },
-  });
-
-  await prisma.$transaction([
-    prisma.teacher.create({
-      data: {
-        id: teacher1.id,
+    // Create Teachers with profile images
+    const teachersData: SeedTeacher[] = [
+      {
         username: "teacher1",
         name: "John",
         surname: "Smith",
@@ -161,14 +429,10 @@ async function tempSeed() {
         bloodType: "A+",
         sex: "MALE",
         birthday: new Date("1980-05-15"),
-        subjects: {
-          connect: [{ id: subjects[0].id }, { id: subjects[1].id }], // Math and Science
-        },
+        subjectNames: ["Mathematics", "Science"],
+        img: "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=200&h=200&auto=format&fit=crop&crop=face",
       },
-    }),
-    prisma.teacher.create({
-      data: {
-        id: teacher2.id,
+      {
         username: "teacher2",
         name: "Sarah",
         surname: "Johnson",
@@ -178,14 +442,10 @@ async function tempSeed() {
         bloodType: "B+",
         sex: "FEMALE",
         birthday: new Date("1985-08-22"),
-        subjects: {
-          connect: [{ id: subjects[2].id }], // English
-        },
+        subjectNames: ["English"],
+        img: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=200&h=200&auto=format&fit=crop&crop=face",
       },
-    }),
-    prisma.teacher.create({
-      data: {
-        id: teacher3.id,
+      {
         username: "teacher3",
         name: "Michael",
         surname: "Brown",
@@ -195,54 +455,52 @@ async function tempSeed() {
         bloodType: "O+",
         sex: "MALE",
         birthday: new Date("1975-11-30"),
-        subjects: {
-          connect: [{ id: subjects[3].id }], // History
-        },
+        subjectNames: ["History"],
+        img: "https://images.unsplash.com/photo-1568602471122-7832951cc4c5?w=200&h=200&auto=format&fit=crop&crop=face",
       },
-    }),
-  ]);
+    ];
 
-  // Create Parents (each will have 1-2 children)
-  const parent1 = await clerk.users.createUser({
-    username: "parent1",
-    password: "SecureAdmin123!",
-    firstName: "Robert",
-    lastName: "Williams",
-    emailAddress: ["robert.williams@example.com"],
-    publicMetadata: { role: "parent" },
-  });
+    const teachers = await Promise.all(
+      teachersData.map(async (teacherData) => {
+        const clerkUser = await createClerkUser({
+          username: teacherData.username,
+          password: "SecureAdmin123!",
+          firstName: teacherData.name,
+          lastName: teacherData.surname,
+          emailAddress: [teacherData.email],
+          publicMetadata: { role: "teacher" },
+          profileImageUrl: teacherData.img,
+        });
 
-  const parent2 = await clerk.users.createUser({
-    username: "parent2",
-    password: "SecureAdmin123!",
-    firstName: "Jennifer",
-    lastName: "Davis",
-    emailAddress: ["jennifer.davis@example.com"],
-    publicMetadata: { role: "parent" },
-  });
+        const subjectConnections = teacherData.subjectNames.map((name) => {
+          const subject = subjects.find((s) => s.name === name);
+          if (!subject) throw new Error(`Subject ${name} not found`);
+          return { id: subject.id };
+        });
 
-  const parent3 = await clerk.users.createUser({
-    username: "parent3",
-    password: "SecureAdmin123!",
-    firstName: "Thomas",
-    lastName: "Miller",
-    emailAddress: ["thomas.miller@example.com"],
-    publicMetadata: { role: "parent" },
-  });
+        return prisma.teacher.upsert({
+          where: { id: clerkUser.id },
+          update: {},
+          create: {
+            id: clerkUser.id,
+            username: teacherData.username,
+            name: teacherData.name,
+            surname: teacherData.surname,
+            email: teacherData.email,
+            phone: teacherData.phone,
+            address: teacherData.address,
+            bloodType: teacherData.bloodType,
+            sex: teacherData.sex,
+            birthday: teacherData.birthday,
+            subjects: { connect: subjectConnections },
+          },
+        });
+      })
+    );
 
-  const parent4 = await clerk.users.createUser({
-    username: "parent4",
-    password: "SecureAdmin123!",
-    firstName: "Lisa",
-    lastName: "Wilson",
-    emailAddress: ["lisa.wilson@example.com"],
-    publicMetadata: { role: "parent" },
-  });
-
-  await prisma.$transaction([
-    prisma.parent.create({
-      data: {
-        id: parent1.id,
+    // Create Parents
+    const parentsData: SeedParent[] = [
+      {
         username: "parent1",
         name: "Robert",
         surname: "Williams",
@@ -250,10 +508,7 @@ async function tempSeed() {
         phone: "555-0201",
         address: "101 Parent Lane, Family Town",
       },
-    }),
-    prisma.parent.create({
-      data: {
-        id: parent2.id,
+      {
         username: "parent2",
         name: "Jennifer",
         surname: "Davis",
@@ -261,10 +516,7 @@ async function tempSeed() {
         phone: "555-0202",
         address: "202 Guardian Ave, Family Town",
       },
-    }),
-    prisma.parent.create({
-      data: {
-        id: parent3.id,
+      {
         username: "parent3",
         name: "Thomas",
         surname: "Miller",
@@ -272,10 +524,7 @@ async function tempSeed() {
         phone: "555-0203",
         address: "303 Caregiver St, Family Town",
       },
-    }),
-    prisma.parent.create({
-      data: {
-        id: parent4.id,
+      {
         username: "parent4",
         name: "Lisa",
         surname: "Wilson",
@@ -283,633 +532,309 @@ async function tempSeed() {
         phone: "555-0204",
         address: "404 Family Rd, Family Town",
       },
-    }),
-  ]);
+    ];
 
-  // Create Classes (each supervised by one teacher)
-  const classes = await prisma.$transaction([
-    prisma.class.create({
-      data: {
+    const parents = await Promise.all(
+      parentsData.map(async (parentData) => {
+        const clerkUser = await createClerkUser({
+          username: parentData.username,
+          password: "SecureAdmin123!",
+          firstName: parentData.name,
+          lastName: parentData.surname,
+          emailAddress: [parentData.email],
+          publicMetadata: { role: "parent" },
+        });
+
+        return prisma.parent.upsert({
+          where: { id: clerkUser.id },
+          update: {},
+          create: {
+            id: clerkUser.id,
+            username: parentData.username,
+            name: parentData.name,
+            surname: parentData.surname,
+            email: parentData.email,
+            phone: parentData.phone,
+            address: parentData.address,
+          },
+        });
+      })
+    );
+
+    // Create Classes
+    const classesData = [
+      {
         name: "9-A",
         capacity: 30,
-        supervisorId: teacher1.id, // Teacher 1 supervises this class
-        gradeId: grades[0].id, // Grade 9
+        supervisorUsername: "teacher1",
+        gradeLevel: 9,
       },
-    }),
-    prisma.class.create({
-      data: {
+      {
         name: "10-B",
         capacity: 25,
-        supervisorId: teacher2.id, // Teacher 2 supervises this class
-        gradeId: grades[1].id, // Grade 10
+        supervisorUsername: "teacher2",
+        gradeLevel: 10,
       },
-    }),
-    prisma.class.create({
-      data: {
+      {
         name: "11-C",
         capacity: 20,
-        supervisorId: teacher3.id, // Teacher 3 supervises this class
-        gradeId: grades[2].id, // Grade 11
+        supervisorUsername: "teacher3",
+        gradeLevel: 11,
       },
-    }),
-  ]);
+    ];
 
-  // Create Students (ensuring each teacher has 2+ students and parents have 1-2 children)
-  const student1 = await clerk.users.createUser({
-    username: "student1",
-    password: "SecureAdmin123!",
-    firstName: "Emily",
-    lastName: "Williams",
-    emailAddress: ["emily.williams@school.edu"],
-    publicMetadata: { role: "student" },
-  });
+    const classes = await Promise.all(
+      classesData.map(async (classData) => {
+        const grade = grades.find((g) => g.level === classData.gradeLevel);
+        if (!grade) throw new Error(`Grade ${classData.gradeLevel} not found`);
 
-  const student2 = await clerk.users.createUser({
-    username: "student2",
-    password: "SecureAdmin123!",
-    firstName: "James",
-    lastName: "Davis",
-    emailAddress: ["james.davis@school.edu"],
-    publicMetadata: { role: "student" },
-  });
+        const teacher = teachers.find(
+          (t) => t.username === classData.supervisorUsername
+        );
+        if (!teacher)
+          throw new Error(`Teacher ${classData.supervisorUsername} not found`);
 
-  const student3 = await clerk.users.createUser({
-    username: "student3",
-    password: "SecureAdmin123!",
-    firstName: "Sophia",
-    lastName: "Miller",
-    emailAddress: ["sophia.miller@school.edu"],
-    publicMetadata: { role: "student" },
-  });
+        return prisma.class.upsert({
+          where: { name: classData.name },
+          update: {},
+          create: {
+            name: classData.name,
+            capacity: classData.capacity,
+            supervisorId: teacher.id,
+            gradeId: grade.id,
+          },
+        });
+      })
+    );
 
-  const student4 = await clerk.users.createUser({
-    username: "student4",
-    password: "SecureAdmin123!",
-    firstName: "Daniel",
-    lastName: "Wilson",
-    emailAddress: ["daniel.wilson@school.edu"],
-    publicMetadata: { role: "student" },
-  });
-
-  const student5 = await clerk.users.createUser({
-    username: "student5",
-    password: "SecureAdmin123!",
-    firstName: "Olivia",
-    lastName: "Williams",
-    emailAddress: ["olivia.williams@school.edu"],
-    publicMetadata: { role: "student" },
-  });
-
-  const student6 = await clerk.users.createUser({
-    username: "student6",
-    password: "SecureAdmin123!",
-    firstName: "Ethan",
-    lastName: "Johnson",
-    emailAddress: ["ethan.johnson@school.edu"],
-    publicMetadata: { role: "student" },
-  });
-
-  await prisma.$transaction([
-    // Teacher 1's students (3 students)
-    prisma.student.create({
-      data: {
-        id: student1.id,
+    // Create Students with profile images
+    const studentsData: SeedStudent[] = [
+      {
         username: "student1",
         name: "Emily",
         surname: "Williams",
         email: "emily.williams@school.edu",
         phone: "555-0301",
         address: "101 Student Lane, Education City",
-        img: "https://example.com/student1.jpg",
+        img: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&h=200&auto=format&fit=crop&crop=face",
         bloodType: "A+",
         sex: "FEMALE",
         birthday: new Date("2008-03-10"),
-        classId: classes[0].id, // Class supervised by Teacher 1
-        gradeId: grades[0].id,
-        parentId: parent1.id, // Parent 1 has 2 children
+        className: "9-A",
+        parentUsername: "parent1",
         rollNo: 1,
       },
-    }),
-    prisma.student.create({
-      data: {
-        id: student5.id,
-        username: "student5",
-        name: "Olivia",
-        surname: "Williams",
-        email: "olivia.williams@school.edu",
-        phone: "555-0305",
-        address: "505 Student Ave, Education City",
-        img: "https://example.com/student5.jpg",
-        bloodType: "A-",
-        sex: "FEMALE",
-        birthday: new Date("2008-07-15"),
-        classId: classes[0].id, // Class supervised by Teacher 1
-        gradeId: grades[0].id,
-        parentId: parent1.id, // Parent 1 has 2 children
-        rollNo: 2,
-      },
-    }),
-    prisma.student.create({
-      data: {
-        id: student2.id,
+      {
         username: "student2",
         name: "James",
         surname: "Davis",
         email: "james.davis@school.edu",
         phone: "555-0302",
         address: "202 Learner Ave, Education City",
-        img: "https://example.com/student2.jpg",
+        img: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&auto=format&fit=crop&crop=face",
         bloodType: "B+",
         sex: "MALE",
         birthday: new Date("2007-07-15"),
-        classId: classes[0].id, // Class supervised by Teacher 1
-        gradeId: grades[0].id,
-        parentId: parent2.id, // Parent 2 has 1 child
-        rollNo: 3,
+        className: "9-A",
+        parentUsername: "parent2",
+        rollNo: 2,
       },
-    }),
-
-    // Teacher 2's students (2 students)
-    prisma.student.create({
-      data: {
-        id: student3.id,
+      {
         username: "student3",
         name: "Sophia",
         surname: "Miller",
         email: "sophia.miller@school.edu",
         phone: "555-0303",
         address: "303 Scholar St, Education City",
-        img: "https://example.com/student3.jpg",
+        img: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&h=200&auto=format&fit=crop&crop=face",
         bloodType: "O+",
         sex: "FEMALE",
         birthday: new Date("2006-11-20"),
-        classId: classes[1].id, // Class supervised by Teacher 2
-        gradeId: grades[1].id,
-        parentId: parent3.id, // Parent 3 has 1 child
+        className: "10-B",
+        parentUsername: "parent3",
         rollNo: 1,
       },
-    }),
-    prisma.student.create({
-      data: {
-        id: student6.id,
-        username: "student6",
-        name: "Ethan",
-        surname: "Johnson",
-        email: "ethan.johnson@school.edu",
-        phone: "555-0306",
-        address: "606 Learner Blvd, Education City",
-        img: "https://example.com/student6.jpg",
-        bloodType: "AB+",
-        sex: "MALE",
-        birthday: new Date("2006-05-22"),
-        classId: classes[1].id, // Class supervised by Teacher 2
-        gradeId: grades[1].id,
-        parentId: parent4.id, // Parent 4 has 1 child
-        rollNo: 2,
-      },
-    }),
-
-    // Teacher 3's students (1 student)
-    prisma.student.create({
-      data: {
-        id: student4.id,
+      {
         username: "student4",
         name: "Daniel",
         surname: "Wilson",
         email: "daniel.wilson@school.edu",
         phone: "555-0304",
         address: "404 Scholar Rd, Education City",
-        img: "https://example.com/student4.jpg",
+        img: "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=200&h=200&auto=format&fit=crop&crop=face",
         bloodType: "B-",
         sex: "MALE",
         birthday: new Date("2005-09-05"),
-        classId: classes[2].id, // Class supervised by Teacher 3
-        gradeId: grades[2].id,
-        parentId: parent4.id, // Parent 4 has 2 children
+        className: "11-C",
+        parentUsername: "parent4",
         rollNo: 1,
       },
-    }),
-  ]);
-
-  // Create Fee Types
-  const feeTypes = await prisma.$transaction([
-    prisma.feeType.create({
-      data: {
-        name: "Tuition Fee",
-        description: "Annual tuition fee",
-        defaultAmount: 1000,
-      },
-    }),
-    prisma.feeType.create({
-      data: {
-        name: "Library Fee",
-        description: "Library access fee",
-        defaultAmount: 50,
-      },
-    }),
-    prisma.feeType.create({
-      data: {
-        name: "Sports Fee",
-        description: "Sports activities fee",
-        defaultAmount: 75,
-      },
-    }),
-  ]);
-
-  // Create Fees for Students
-  await prisma.$transaction([
-    prisma.fee.create({
-      data: {
-        studentId: student1.id,
-        feeTypeId: feeTypes[0].id,
-        amount: 1000,
-        dueDate: new Date("2023-12-31"),
-        academicYear: "2023-2024",
-        semester: "1",
-        status: "pending",
-      },
-    }),
-    prisma.fee.create({
-      data: {
-        studentId: student2.id,
-        feeTypeId: feeTypes[0].id,
-        amount: 1000,
-        dueDate: new Date("2023-12-31"),
-        academicYear: "2023-2024",
-        semester: "1",
-        status: "paid",
-        paidAmount: 1000,
-        paidDate: new Date("2023-09-15"),
-        paymentMethod: "credit_card",
-      },
-    }),
-    prisma.fee.create({
-      data: {
-        studentId: student3.id,
-        feeTypeId: feeTypes[1].id,
-        amount: 50,
-        dueDate: new Date("2023-12-31"),
-        academicYear: "2023-2024",
-        semester: "1",
-        status: "partial",
-        paidAmount: 25,
-        paidDate: new Date("2023-10-01"),
-        paymentMethod: "bank_transfer",
-      },
-    }),
-    prisma.fee.create({
-      data: {
-        studentId: student4.id,
-        feeTypeId: feeTypes[2].id,
-        amount: 75,
-        dueDate: new Date("2023-12-31"),
-        academicYear: "2023-2024",
-        semester: "1",
-        status: "pending",
-      },
-    }),
-    prisma.fee.create({
-      data: {
-        studentId: student5.id,
-        feeTypeId: feeTypes[0].id,
-        amount: 1000,
-        dueDate: new Date("2023-12-31"),
-        academicYear: "2023-2024",
-        semester: "1",
-        status: "paid",
-        paidAmount: 1000,
-        paidDate: new Date("2023-09-10"),
-        paymentMethod: "credit_card",
-      },
-    }),
-    prisma.fee.create({
-      data: {
-        studentId: student6.id,
-        feeTypeId: feeTypes[1].id,
-        amount: 50,
-        dueDate: new Date("2023-12-31"),
-        academicYear: "2023-2024",
-        semester: "1",
-        status: "paid",
-        paidAmount: 50,
-        paidDate: new Date("2023-09-05"),
-        paymentMethod: "cash",
-      },
-    }),
-  ]);
-
-  // Create Lessons (each teacher teaches their own class)
-  const lessons = await prisma.$transaction([
-    // Teacher 1's lessons (Math and Science for Class 9-A)
-    prisma.lesson.create({
-      data: {
-        name: "Math Class",
-        day: "MONDAY",
-        subjectId: subjects[0].id, // Math
-        classId: classes[0].id, // Class 9-A
-        teacherId: teacher1.id,
-      },
-    }),
-    prisma.lesson.create({
-      data: {
-        name: "Science Class",
-        day: "WEDNESDAY",
-        subjectId: subjects[1].id, // Science
-        classId: classes[0].id, // Class 9-A
-        teacherId: teacher1.id,
-      },
-    }),
-
-    // Teacher 2's lessons (English for Class 10-B)
-    prisma.lesson.create({
-      data: {
-        name: "English Class",
-        day: "TUESDAY",
-        subjectId: subjects[2].id, // English
-        classId: classes[1].id, // Class 10-B
-        teacherId: teacher2.id,
-      },
-    }),
-
-    // Teacher 3's lessons (History for Class 11-C)
-    prisma.lesson.create({
-      data: {
-        name: "History Class",
-        day: "THURSDAY",
-        subjectId: subjects[3].id, // History
-        classId: classes[2].id, // Class 11-C
-        teacherId: teacher3.id,
-      },
-    }),
-  ]);
-
-  // Create Assignments
-  const assignments = await prisma.$transaction([
-    prisma.assignment.create({
-      data: {
-        title: "Math Homework 1",
-        startDate: new Date("2023-09-01"),
-        dueDate: new Date("2023-09-15"),
-        lessonId: lessons[0].id, // Teacher 1's math lesson
-      },
-    }),
-    prisma.assignment.create({
-      data: {
-        title: "English Essay",
-        startDate: new Date("2023-09-05"),
-        dueDate: new Date("2023-09-20"),
-        lessonId: lessons[2].id, // Teacher 2's english lesson
-      },
-    }),
-  ]);
-
-  // Create Exams
-  const exams = await prisma.$transaction([
-    prisma.exam.create({
-      data: {
-        title: "Midterm Math Exam",
-        startTime: new Date("2023-10-15T09:00:00"),
-        endTime: new Date("2023-10-15T11:00:00"),
-        lessonId: lessons[0].id, // Teacher 1's math lesson
-      },
-    }),
-    prisma.exam.create({
-      data: {
-        title: "English Midterm",
-        startTime: new Date("2023-10-16T09:00:00"),
-        endTime: new Date("2023-10-16T11:00:00"),
-        lessonId: lessons[2].id, // Teacher 2's english lesson
-      },
-    }),
-  ]);
-
-  // Create Results (for Teacher 1's and Teacher 2's students)
-  await prisma.$transaction([
-    // Results for Teacher 1's students
-    prisma.result.create({
-      data: {
-        score: 85,
-        assignmentId: assignments[0].id,
-        studentId: student1.id,
-      },
-    }),
-    prisma.result.create({
-      data: {
-        score: 92,
-        assignmentId: assignments[0].id,
-        studentId: student2.id,
-      },
-    }),
-    prisma.result.create({
-      data: {
-        score: 78,
-        examId: exams[0].id,
-        studentId: student1.id,
-      },
-    }),
-    prisma.result.create({
-      data: {
-        score: 88,
-        examId: exams[0].id,
-        studentId: student2.id,
-      },
-    }),
-
-    // Results for Teacher 2's students
-    prisma.result.create({
-      data: {
-        score: 95,
-        assignmentId: assignments[1].id,
-        studentId: student3.id,
-      },
-    }),
-    prisma.result.create({
-      data: {
-        score: 90,
-        examId: exams[1].id,
-        studentId: student3.id,
-      },
-    }),
-  ]);
-
-  // Create Attendances
-  await prisma.$transaction([
-    // Attendances for Teacher 1's students
-    prisma.attendance.create({
-      data: {
-        date: new Date("2023-09-01"),
-        present: true,
-        studentId: student1.id,
-      },
-    }),
-    prisma.attendance.create({
-      data: {
-        date: new Date("2023-09-01"),
-        present: false,
-        studentId: student2.id,
-      },
-    }),
-    prisma.attendance.create({
-      data: {
-        date: new Date("2023-09-02"),
-        present: true,
-        studentId: student1.id,
-      },
-    }),
-
-    // Attendances for Teacher 2's students
-    prisma.attendance.create({
-      data: {
-        date: new Date("2023-09-01"),
-        present: true,
-        studentId: student3.id,
-      },
-    }),
-
-    // Attendances for Teacher 3's student
-    prisma.attendance.create({
-      data: {
-        date: new Date("2023-09-01"),
-        present: true,
-        studentId: student4.id,
-      },
-    }),
-  ]);
-
-  // Create Behaviors
-  const behaviors = await prisma.$transaction([
-    prisma.behavior.create({
-      data: {
-        title: "Homework Completion",
-        description: "Completed homework on time",
-        point: 5,
-        isNegative: false,
-      },
-    }),
-    prisma.behavior.create({
-      data: {
-        title: "Tardiness",
-        description: "Late to class",
-        point: 2,
-        isNegative: true,
-      },
-    }),
-  ]);
-
-  // Create Incidents (for Teacher 1's and Teacher 2's students)
-  await prisma.$transaction([
-    // Positive incident for Teacher 1's student
-    prisma.incident.create({
-      data: {
-        date: new Date("2023-09-05"),
-        givenById: teacher1.id,
-        comment: "Excellent participation in class",
-        studentId: student1.id,
-        behaviorId: behaviors[0].id,
-      },
-    }),
-
-    // Negative incident for Teacher 1's student
-    prisma.incident.create({
-      data: {
-        date: new Date("2023-09-10"),
-        givenById: teacher1.id,
-        comment: "Late to class 3 times this week",
-        studentId: student2.id,
-        behaviorId: behaviors[1].id,
-      },
-    }),
-
-    // Positive incident for Teacher 2's student
-    prisma.incident.create({
-      data: {
-        date: new Date("2023-09-12"),
-        givenById: teacher2.id,
-        comment: "Excellent essay work",
-        studentId: student3.id,
-        behaviorId: behaviors[0].id,
-      },
-    }),
-  ]);
-
-  // Create Events
-  await prisma.$transaction([
-    // Event for Teacher 1's class
-    prisma.event.create({
-      data: {
-        title: "Parent-Teacher Meeting",
-        description: "Quarterly parent-teacher conference",
-        startTime: new Date("2023-10-05T16:00:00"),
-        endTime: new Date("2023-10-05T19:00:00"),
-        classId: classes[0].id,
-      },
-    }),
-
-    // School-wide event
-    prisma.event.create({
-      data: {
-        title: "School Picnic",
-        description: "Annual school picnic day",
-        startTime: new Date("2023-10-15T09:00:00"),
-        endTime: new Date("2023-10-15T15:00:00"),
-      },
-    }),
-  ]);
-
-  // Create Announcements
-  const announcements = await prisma.$transaction([
-    // Announcement for Teacher 1's class
-    prisma.announcement.create({
-      data: {
-        title: "Welcome Back to School!",
-        description: "Welcome to the new academic year 2023-2024",
-        date: new Date("2023-09-01"),
-        classId: classes[0].id,
-      },
-    }),
-
-    // School-wide announcement
-    prisma.announcement.create({
-      data: {
-        title: "School Closed on Monday",
-        description: "School will be closed next Monday for maintenance",
-        date: new Date("2023-09-15"),
-      },
-    }),
-  ]);
-
-  // Mark some announcements as viewed
-  await prisma.announcementView.createMany({
-    data: [
-      // Teacher 1 views class announcement
       {
-        userId: teacher1.id,
-        announcementId: announcements[0].id,
+        username: "student5",
+        name: "Olivia",
+        surname: "Williams",
+        email: "olivia.williams@school.edu",
+        phone: "555-0305",
+        address: "505 Student Ave, Education City",
+        img: "https://images.unsplash.com/photo-1554151228-14d9def656e4?w=200&h=200&auto=format&fit=crop&crop=face",
+        bloodType: "A-",
+        sex: "FEMALE",
+        birthday: new Date("2008-07-15"),
+        className: "9-A",
+        parentUsername: "parent1",
+        rollNo: 3,
       },
-
-      // Student 1 views class announcement
       {
-        userId: student1.id,
-        announcementId: announcements[0].id,
+        username: "student6",
+        name: "Ethan",
+        surname: "Johnson",
+        email: "ethan.johnson@school.edu",
+        phone: "555-0306",
+        address: "606 Learner Blvd, Education City",
+        img: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&h=200&auto=format&fit=crop&crop=face",
+        bloodType: "AB+",
+        sex: "MALE",
+        birthday: new Date("2006-05-22"),
+        className: "10-B",
+        parentUsername: "parent4",
+        rollNo: 2,
       },
+    ];
 
-      // Teacher 1 views school-wide announcement
-      {
-        userId: teacher1.id,
-        announcementId: announcements[1].id,
-      },
-    ],
-  });
+    const students = await Promise.all(
+      studentsData.map(async (studentData) => {
+        const clerkUser = await createClerkUser({
+          username: studentData.username,
+          password: "SecureAdmin123!",
+          firstName: studentData.name,
+          lastName: studentData.surname,
+          emailAddress: [studentData.email],
+          publicMetadata: { role: "student" },
+          profileImageUrl: studentData.img,
+        });
 
-  console.log("Seed data created successfully!");
+        const classRecord = classes.find(
+          (c) => c.name === studentData.className
+        );
+        if (!classRecord)
+          throw new Error(`Class ${studentData.className} not found`);
+
+        const grade = grades.find(
+          (g) => g.level === parseInt(studentData.className.split("-")[0])
+        );
+        if (!grade)
+          throw new Error(`Grade for class ${studentData.className} not found`);
+
+        const parent = parents.find(
+          (p) => p.username === studentData.parentUsername
+        );
+        if (!parent)
+          throw new Error(`Parent ${studentData.parentUsername} not found`);
+
+        return prisma.student.upsert({
+          where: { id: clerkUser.id },
+          update: {},
+          create: {
+            id: clerkUser.id,
+            username: studentData.username,
+            name: studentData.name,
+            surname: studentData.surname,
+            email: studentData.email,
+            phone: studentData.phone,
+            address: studentData.address,
+            img: studentData.img,
+            bloodType: studentData.bloodType,
+            sex: studentData.sex,
+            birthday: studentData.birthday,
+            classId: classRecord.id,
+            gradeId: grade.id,
+            parentId: parent.id,
+            rollNo: studentData.rollNo,
+          },
+        });
+      })
+    );
+
+    // Create some basic lessons for demonstration
+    const lessons = await Promise.all([
+      prisma.lesson.create({
+        data: {
+          name: "Algebra Basics",
+          day: "MONDAY",
+          subjectId: subjects.find((s) => s.name === "Mathematics")!.id,
+          classId: classes.find((c) => c.name === "9-A")!.id,
+          teacherId: teachers.find((t) => t.username === "teacher1")!.id,
+        },
+      }),
+      prisma.lesson.create({
+        data: {
+          name: "English Literature",
+          day: "TUESDAY",
+          subjectId: subjects.find((s) => s.name === "English")!.id,
+          classId: classes.find((c) => c.name === "10-B")!.id,
+          teacherId: teachers.find((t) => t.username === "teacher2")!.id,
+        },
+      }),
+    ]);
+
+    // Create some fees for students with required fields
+    const feeType = await prisma.feeType.findFirst({
+      where: { name: "Tuition" },
+    });
+
+    if (feeType) {
+      await Promise.all(
+        students.slice(0, 3).map((student) =>
+          prisma.fee.create({
+            data: {
+              amount: feeType.defaultAmount!,
+              dueDate: new Date("2024-12-31"),
+              status: "pending", // Use lowercase to match schema default
+              academicYear: "2024-2025", // Required field
+              semester: "Fall", // Required field
+              studentId: student.id,
+              feeTypeId: feeType.id,
+            },
+          })
+        )
+      );
+    }
+
+    console.log("Full seed completed successfully");
+    console.log(
+      `Created ${teachers.length} teachers with profile image URLs in metadata`
+    );
+    console.log(
+      `Created ${students.length} students with profile image URLs in metadata`
+    );
+    console.log(`Created ${parents.length} parents`);
+    console.log(`Created ${classes.length} classes`);
+
+    // Log instructions for frontend implementation
+    console.log("\n=== FRONTEND IMPLEMENTATION GUIDE ===");
+    console.log("To display profile images in your frontend:");
+    console.log("1. Access user.publicMetadata.profileImageUrl");
+    console.log("2. Use it as the src for profile images");
+    console.log(
+      "3. Implement image update functionality using Clerk's client methods"
+    );
+    console.log("=====================================\n");
+  } catch (error) {
+    console.error(
+      "Error in fullSeed:",
+      error instanceof Error ? error.message : error
+    );
+    throw error;
+  }
 }
 
+// Execute
 main()
   .then(async () => {
     await prisma.$disconnect();
   })
   .catch(async (e) => {
-    console.error("seed has error:", e);
+    console.error("Seed failed:", e);
     await prisma.$disconnect();
     process.exit(1);
   });
