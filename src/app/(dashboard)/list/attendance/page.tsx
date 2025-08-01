@@ -64,36 +64,30 @@ const AttendanceListPage = async ({
       in: parent.students.map(student => student.id),
     };
   } else if (role === "teacher") {
-    // Teachers can only see attendance for their assigned classes
-    const teacher = await prisma.teacher.findUnique({
-      where: { id: userId },
-      include: { 
-        subjects: {
-          include: { lessons: true }
-        }
-      },
-    });
-    
-    if (!teacher) {
-      redirect('/dashboard');
-    }
-    
-    // Get all class IDs from teacher's lessons
-    const classIds = teacher.subjects
-      .flatMap(subject => subject.lessons)
-      .map(lesson => lesson.classId);
-    
-    if (classIds.length === 0) {
-      // If teacher has no assigned classes, show empty result
-      query.student = {
-        classId: { in: [] }
-      };
-    } else {
-      query.student = {
-        classId: { in: classIds }
-      };
-    }
+  const teacher = await prisma.teacher.findUnique({
+    where: { id: userId },
+    include: { 
+      classes: true // Teachers can be supervisors of classes
+    },
+  });
+  
+  if (!teacher) {
+    redirect('/dashboard');
   }
+  
+  // Get class IDs where this teacher is a supervisor
+  const classIds = teacher.classes.map(cls => cls.id);
+  
+  if (classIds.length === 0) {
+    query.student = {
+      classId: { in: [] }
+    };
+  } else {
+    query.student = {
+      classId: { in: classIds }
+    };
+  }
+}
   // Admin can see all records (no additional filtering needed)
 
   // Apply search and filter parameters
