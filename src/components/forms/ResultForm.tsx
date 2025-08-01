@@ -54,16 +54,6 @@ const ResultForm = ({
     teacherClassIds,
   } = relatedData || {};
 
-  // Debug logging - remove this in production
-  console.log("🔍 ResultForm Debug:");
-  console.log("relatedData:", relatedData);
-  console.log("teacherClassIds:", teacherClassIds);
-  console.log("students count:", students.length);
-  console.log(
-    "filteredStudents will be based on teacherClassIds:",
-    teacherClassIds
-  );
-
   // Filter students based on teacher's assigned classes
   const filteredStudents = useMemo(() => {
     if (!teacherClassIds || teacherClassIds.length === 0) {
