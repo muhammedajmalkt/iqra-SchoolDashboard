@@ -27,7 +27,6 @@
 import { PrismaClient } from "@prisma/client";
 import { createClerkClient, User } from "@clerk/backend";
 import { config } from "dotenv";
-
 config();
 
 const prisma = new PrismaClient();
