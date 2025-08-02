@@ -21,6 +21,14 @@ type ResultList = {
   score: number;
   className: string;
   startTime: Date;
+  // Add the original data structure for forms
+  originalData: {
+    id: number;
+    score: number;
+    studentId: string;
+    examId: number | null;
+    assignmentId: number | null;
+  };
 };
 
 const ResultListPage = async ({
@@ -90,7 +98,8 @@ const ResultListPage = async ({
         <div className="flex items-center gap-2">
           {(role === "admin" || role === "teacher") && (
             <>
-              <FormContainer table="result" type="update" data={item} />
+              {/* Pass the original data structure instead of flattened data */}
+              <FormContainer table="result" type="update" data={item.originalData} />
               <FormContainer table="result" type="delete" id={item.id} />
             </>
           )}
@@ -257,6 +266,14 @@ const ResultListPage = async ({
         score: item.score,
         className: assessment.lesson.class.name,
         startTime: isExam ? assessment.startTime : assessment.startDate,
+        // Keep the original data structure for the form
+        originalData: {
+          id: item.id,
+          score: item.score,
+          studentId: item.studentId,
+          examId: item.examId,
+          assignmentId: item.assignmentId,
+        },
       };
     })
     .filter((item): item is ResultList => item !== null); // Remove null values and type assertion

@@ -48,7 +48,7 @@ const FinanceListPage = async ({
           select: { id: true }
         }
       }
-    });
+    })
     
     if (parent && parent.students.length > 0) {
       const studentIds = parent.students.map(student => student.id);
@@ -61,7 +61,24 @@ const FinanceListPage = async ({
       query.studentId = "impossible-id";
       allowedStudentIds = [];
     }
+  }  
+  else if (role === "teacher" && userId) {
+  // Teachers can only see fees for students in their classes
+  const classes = await prisma.class.findMany({
+    where: { supervisorId: userId },
+    include: { students: { select: { id: true } } },
+  });
+
+  const studentIds = classes.flatMap(cls => cls.students.map(s => s.id));
+
+  if (studentIds.length > 0) {
+    allowedStudentIds = studentIds;
+    query.studentId = { in: studentIds };
+  } else {
+    query.studentId = "impossible-id";
+    allowedStudentIds = [];
   }
+}
 
   // Fetch fee types for the filter dropdown
   const feeTypes = await prisma.feeType.findMany({
@@ -69,11 +86,11 @@ const FinanceListPage = async ({
   });
 
   // Fetch students for the form (admin/teacher only)
-  const students = (role === "admin" || role === "teacher") ? 
-    await prisma.student.findMany({
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, email: true }
-    }) : [];
+  // const students = (role === "admin" || role === "teacher") ? 
+  //   await prisma.student.findMany({
+  //     orderBy: { name: "asc" },
+  //     select: { id: true, name: true, email: true }
+  //   }) : [];
 
   // Check if we want all records (explicit filter with showAll=true)
   const showAllRecords = queryParams.showAll === "true";
