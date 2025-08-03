@@ -176,6 +176,16 @@ const IncidentListPage = async ({
           },
         },
       };
+    } else if (role === "student") {
+      return {
+        studentId: userId!, // Only show student's own incidents
+      };
+    } else if (role === "parent") {
+      return {
+        student: {
+          parentId: userId!, // Only show incidents for parent's children
+        },
+      };
     }
     return {}; // Admin sees all incidents
   };
@@ -263,6 +273,10 @@ const IncidentListPage = async ({
       studentQuery.class = {
         supervisorId: userId!, // Only show teacher's supervised students
       };
+    } else if (role === "student") {
+      studentQuery.id = userId!; // Only show the student themselves
+    } else if (role === "parent") {
+      studentQuery.parentId = userId!; // Only show parent's children
     }
 
     // Build additional filters array
@@ -285,13 +299,28 @@ const IncidentListPage = async ({
 
     // Combine base query with additional filters
     if (additionalFilters.length > 0) {
+      const baseFilters = [];
+      
+      if (role === "teacher") {
+        baseFilters.push({ class: { supervisorId: userId! } });
+      } else if (role === "student") {
+        baseFilters.push({ id: userId! });
+      } else if (role === "parent") {
+        baseFilters.push({ parentId: userId! });
+      }
+
       studentQuery.AND = [
-        ...(role === "teacher" ? [{ class: { supervisorId: userId! } }] : []),
+        ...baseFilters,
         ...additionalFilters,
       ];
-      // Remove the base class filter if we're using AND
+      
+      // Remove the base filters since they're now in AND
       if (role === "teacher") {
         delete studentQuery.class;
+      } else if (role === "student") {
+        delete studentQuery.id;
+      } else if (role === "parent") {
+        delete studentQuery.parentId;
       }
     }
 
@@ -400,7 +429,13 @@ const IncidentListPage = async ({
       <div className="flex items-center justify-between">
         <h1 className="hidden md:block text-lg font-semibold">
           {/* ✅ Update header to reflect role-based view */}
-          {role === "teacher" ? "My Students' Incidents" : "All Incidents"}
+          {role === "teacher" 
+            ? "My Students' Incidents" 
+            : role === "student" 
+            ? "My Incidents" 
+            : role === "parent" 
+            ? "My Children's Incidents" 
+            : "All Incidents"}
         </h1>
         <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
           <TableSearch />
