@@ -34,9 +34,9 @@ const FinanceChart = ({ userId, role }: FinanceChartProps) => {
     const currentYear = new Date().getFullYear();
     const currentMonth = new Date().getMonth();
     // Academic year starts in July (month 6)
-    return currentMonth >= 6 ? 
-      `${currentYear}-${currentYear + 1}` : 
-      `${currentYear - 1}-${currentYear}`;
+    return currentMonth >= 6
+      ? `${currentYear}-${currentYear + 1}`
+      : `${currentYear - 1}-${currentYear}`;
   });
 
   useEffect(() => {
@@ -54,14 +54,23 @@ const FinanceChart = ({ userId, role }: FinanceChartProps) => {
 
       const response = await fetch(`/api/finance/chart?${params}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch finance data');
+        throw new Error("Failed to fetch finance data");
+      }
+
+      // Check if response is actually JSON
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Expected JSON but received:", text);
+        setError("Something wrong happened!");
+        return;
       }
 
       const chartData = await response.json();
       setData(chartData);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : "An error occurred");
       setData(getDefaultData());
     } finally {
       setLoading(false);
@@ -69,8 +78,21 @@ const FinanceChart = ({ userId, role }: FinanceChartProps) => {
   };
 
   const getDefaultData = (): MonthlyData[] => {
-    const months = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-    return months.map(month => ({
+    const months = [
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+    ];
+    return months.map((month) => ({
       name: month,
       collected: 0,
       pending: 0,
@@ -103,7 +125,11 @@ const FinanceChart = ({ userId, role }: FinanceChartProps) => {
             </p>
             <p className="text-blue-600 border-t pt-1">
               <span className="font-medium">Total: </span>
-              {formatCurrency((payload[0]?.value || 0) + (payload[1]?.value || 0) + (payload[2]?.value || 0))}
+              {formatCurrency(
+                (payload[0]?.value || 0) +
+                  (payload[1]?.value || 0) +
+                  (payload[2]?.value || 0)
+              )}
             </p>
           </div>
         </div>
@@ -189,9 +215,9 @@ const FinanceChart = ({ userId, role }: FinanceChartProps) => {
             tickLine={false}
             tickMargin={10}
           />
-          <YAxis 
-            axisLine={false} 
-            tick={{ fill: "#6b7280", fontSize: 12 }} 
+          <YAxis
+            axisLine={false}
+            tick={{ fill: "#6b7280", fontSize: 12 }}
             tickLine={false}
             tickMargin={20}
             tickFormatter={(value) => `₹${value / 1000}k`}
@@ -237,7 +263,9 @@ const FinanceChart = ({ userId, role }: FinanceChartProps) => {
         <div className="text-center">
           <p className="text-sm text-gray-600">Total Collected</p>
           <p className="text-lg font-semibold text-green-600">
-            {formatCurrency(data.reduce((sum, item) => sum + item.collected, 0))}
+            {formatCurrency(
+              data.reduce((sum, item) => sum + item.collected, 0)
+            )}
           </p>
         </div>
         <div className="text-center">
