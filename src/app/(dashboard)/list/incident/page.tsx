@@ -31,41 +31,41 @@ const IncidentListPage = async ({
 }: {
   searchParams: Promise<{ [key: string]: string | undefined }>;
 }) => {
-  const { sessionClaims } = await auth();
+  const { sessionClaims, userId } = await auth();
   const role = (sessionClaims?.publicMetadata as { role?: string })?.role;
 
   const columns = [
     {
       header: "Student",
       accessor: "student",
-      className: "text-center", // Center-align header
+      className: "text-center",
     },
     {
       header: "Behavior",
       accessor: "behavior",
-      className: "text-center hidden md:table-cell", // Center-align and keep responsive behavior
+      className: "text-center hidden md:table-cell",
     },
     {
       header: "Points",
       accessor: "points",
-      className: "text-center hidden lg:table-cell", // Center-align and keep responsive behavior
+      className: "text-center hidden lg:table-cell",
     },
     {
       header: "Date",
       accessor: "date",
-      className: "text-center hidden lg:table-cell", // Center-align and keep responsive behavior
+      className: "text-center hidden lg:table-cell",
     },
     {
       header: "Comment",
       accessor: "comment",
-      className: "text-center hidden xl:table-cell", // Center-align and keep responsive behavior
+      className: "text-center hidden xl:table-cell",
     },
     ...(role === "admin" || role === "teacher"
       ? [
           {
             header: "Actions",
             accessor: "action",
-            className: "text-center", // Center-align header
+            className: "text-center",
           },
         ]
       : []),
@@ -75,32 +75,32 @@ const IncidentListPage = async ({
     {
       header: "Student Name",
       accessor: "studentName",
-      className: "text-center", // Center-align header
+      className: "text-center",
     },
     {
       header: "Class",
       accessor: "className",
-      className: "text-center", // Center-align header
+      className: "text-center",
     },
     {
       header: "Gender",
       accessor: "gender",
-      className: "text-center", // Center-align header
+      className: "text-center",
     },
     {
       header: "Phone",
       accessor: "phone",
-      className: "text-center", // Center-align header
+      className: "text-center",
     },
     {
       header: "Total Points",
       accessor: "totalPoints",
-      className: "text-center", // Center-align header
+      className: "text-center",
     },
     {
       header: "Total Incidents",
       accessor: "totalIncidents",
-      className: "text-center", // Center-align header
+      className: "text-center",
     },
   ];
 
@@ -166,8 +166,24 @@ const IncidentListPage = async ({
   const isSummary = view === "summary";
   const p = page ? parseInt(page) : 1;
 
+  // ✅ BUILD BASE QUERY WITH ROLE-BASED FILTERING
+  const buildBaseQuery = () => {
+    if (role === "teacher") {
+      return {
+        student: {
+          class: {
+            supervisorId: userId!, // Only show incidents for teacher's supervised students
+          },
+        },
+      };
+    }
+    return {}; // Admin sees all incidents
+  };
+
   // URL PARAMS CONDITION for Incidents
-  const incidentQuery: Prisma.IncidentWhereInput = {};
+  const incidentQuery: Prisma.IncidentWhereInput = {
+    ...buildBaseQuery(), // ✅ Apply role-based filtering
+  };
 
   if (queryParams) {
     for (const [key, value] of Object.entries(queryParams)) {
@@ -239,20 +255,44 @@ const IncidentListPage = async ({
   let count: number = 0;
 
   if (isSummary) {
-    // Fetch aggregated data for summary view
+    // ✅ BUILD STUDENT QUERY WITH ROLE-BASED FILTERING FOR SUMMARY
     const studentQuery: Prisma.StudentWhereInput = {};
-
-    // If studentId is provided, filter students by id
-    if (queryParams.studentId) {
-      studentQuery.id = queryParams.studentId;
+    
+    // Role-based filtering for summary
+    if (role === "teacher") {
+      studentQuery.class = {
+        supervisorId: userId!, // Only show teacher's supervised students
+      };
     }
 
-    // If search is provided, include it in student filtering
+    // Build additional filters array
+    const additionalFilters: Prisma.StudentWhereInput[] = [];
+
+    // If studentId is provided, add to filters
+    if (queryParams.studentId) {
+      additionalFilters.push({ id: queryParams.studentId });
+    }
+
+    // If search is provided, add to filters
     if (queryParams.search) {
-      studentQuery.OR = [
-        { name: { contains: queryParams.search, mode: "insensitive" } },
-        { surname: { contains: queryParams.search, mode: "insensitive" } },
+      additionalFilters.push({
+        OR: [
+          { name: { contains: queryParams.search, mode: "insensitive" } },
+          { surname: { contains: queryParams.search, mode: "insensitive" } },
+        ],
+      });
+    }
+
+    // Combine base query with additional filters
+    if (additionalFilters.length > 0) {
+      studentQuery.AND = [
+        ...(role === "teacher" ? [{ class: { supervisorId: userId! } }] : []),
+        ...additionalFilters,
       ];
+      // Remove the base class filter if we're using AND
+      if (role === "teacher") {
+        delete studentQuery.class;
+      }
     }
 
     const summaryData = await prisma.student.findMany({
@@ -260,7 +300,11 @@ const IncidentListPage = async ({
       include: {
         class: { select: { name: true } },
         Incident: {
-          where: incidentQuery,
+          // ✅ Filter incidents as well (though they should already be filtered by student selection)
+          where: Object.keys(incidentQuery).length > 1 ? 
+            Object.fromEntries(
+              Object.entries(incidentQuery).filter(([key]) => key !== 'student')
+            ) : {},
           include: {
             behavior: { select: { point: true, isNegative: true } },
           },
@@ -276,10 +320,9 @@ const IncidentListPage = async ({
             return { name: "desc" };
           case "points_asc":
           case "points_desc":
-            // Sorting by points requires aggregation, handle in client-side
             return { name: "asc" }; // Fallback to name sorting
           default:
-            return { name: "asc" }; // Default sort for summary
+            return { name: "asc" };
         }
       })(),
     });
@@ -355,7 +398,10 @@ const IncidentListPage = async ({
     <div className="bg-white p-4 rounded-md flex-1 m-4 mt-0">
       {/* TOP */}
       <div className="flex items-center justify-between">
-        <h1 className="hidden md:block text-lg font-semibold">All Incidents</h1>
+        <h1 className="hidden md:block text-lg font-semibold">
+          {/* ✅ Update header to reflect role-based view */}
+          {role === "teacher" ? "My Students' Incidents" : "All Incidents"}
+        </h1>
         <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
           <TableSearch />
           <div className="flex items-center gap-4 self-end">
