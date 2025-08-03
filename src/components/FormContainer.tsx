@@ -380,32 +380,55 @@ const FormContainer = async ({ table, type, data, id }: FormContainerProps) => {
         break;
       }
       case "incident": {
-        const [behaviors, students] = await prisma.$transaction([
-          prisma.behavior.findMany({
-            select: { id: true, title: true },
-            orderBy: { title: "asc" },
-          }),
-          prisma.student.findMany({
-            where:
-              role === "teacher"
-                ? {
-                  class: {
-                    lessons: {
-                      some: {
-                        teacherId: currentUserId!,
-                      },
-                    },
-                  },
-                }
-                : {},
-            select: { id: true, name: true, surname: true },
-            orderBy: { name: "asc" },
-          }),
-        ]);
+  const [behaviors, students] = await prisma.$transaction([
+    prisma.behavior.findMany({
+      select: { id: true, title: true },
+      orderBy: { title: "asc" },
+    }),
+    prisma.student.findMany({
+      where:
+        role === "teacher"
+          ? {
+              class: {
+                supervisorId: currentUserId!, // ✅ Use supervisor relationship
+              },
+            }
+          : {},
+      select: { 
+        id: true, 
+        name: true, 
+        surname: true,
+        rollNo: true, // Include roll number for better identification
+        class: {
+          select: { name: true }
+        }
+      },
+      orderBy: [
+        { class: { name: "asc" } }, // Sort by class first
+        { rollNo: "asc" }           // Then by roll number
+      ],
+    }),
+  ]);
 
-        relatedData = { behaviors, students, currentUserId };
-        break;
-      }
+  // Format students with roll number and class info for better identification
+  const formattedStudents = students.map(student => ({
+    id: student.id,
+    name: `${student.rollNo} - ${student.name} ${student.surname}`,
+    fullName: `${student.name} ${student.surname}`,
+    rollNo: student.rollNo,
+    className: student.class?.name,
+    // Keep original data for form use
+    originalName: student.name,
+    originalSurname: student.surname,
+  }));
+
+  relatedData = { 
+    behaviors, 
+    students: formattedStudents, 
+    currentUserId 
+  };
+  break;
+}
       case "fee": {
         const studentClasses = await prisma.student.findMany({
           select: { id: true, name: true },
